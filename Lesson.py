@@ -1,5 +1,5 @@
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, MenuButton, MenuButtonCommands
 from dotenv import load_dotenv
 import os
 import shutil
@@ -16,28 +16,32 @@ WORK_DIR = './yolo'
 os.makedirs(WORK_DIR, exist_ok=True)
 yolov5 = TerraYoloV5(work_dir=WORK_DIR)
 
-
 # функция команды /start
 async def start(update, context):
-    await update.message.reply_text('Пришлите фото для распознавания объектов')
-    # keyboard = [
-    #     [
-    #         InlineKeyboardButton("Люди", callback_data="1"),
+    keyboard = [
+        [
+            InlineKeyboardButton("Люди", callback_data="люди"),
 
-    #         InlineKeyboardButton("Животные", callback_data="2"),
-    #     ],
-    #     [
-    #         InlineKeyboardButton("Овощи и фрукты", callback_data="3"),
-    #         InlineKeyboardButton("Транспорт", callback_data="4")
-    #     ],
-    #     [InlineKeyboardButton("Всё подряд", callback_data="5")]
-    # ]
+            InlineKeyboardButton("Животные", callback_data="животные"),
+        ],
+        [
+            InlineKeyboardButton("Еда и кухня", callback_data="еда"),
+            InlineKeyboardButton("Транспорт", callback_data="транспорт")
+        ],
+        [InlineKeyboardButton("Всё подряд", callback_data="всё подряд")]
+    ]
 
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Пожалуйста, выберите, что будем распознавать:", reply_markup=reply_markup)
 
-    # reply_markup = InlineKeyboardMarkup(keyboard)
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Parses the CallbackQuery and updates the message text."""
 
-
-    # await update.message.reply_text("Пожалуйста, выберите, что будем распознавать:", reply_markup=reply_markup)
+    query = update.callback_query
+    context.user_data['user_choice'] = query.data
+    await query.answer()
+    await query.edit_message_text(text="А теперь пришлите фото для распознавания объектов")
+    # await query.edit_message_text(text=f"Вы выбрали для распознования: {query.data}") 
 
 # функция для работы с текстом
 async def help(update, context):
@@ -59,7 +63,7 @@ async def attachment(update, context):
         await update.message.reply_text('Пожалуйста, отправьте сжатую версию.')
 
 # функция обработки изображения
-async def detection(update, context):
+async def detection(update, context, od_type=None):
     # удаляем папку images с предыдущим загруженным изображением и папку runs с результатом предыдущего распознавания
     try:
         shutil.rmtree('images') 
@@ -77,6 +81,8 @@ async def detection(update, context):
     image_path = os.path.join('images', image_name)
     # скачиваем файл с сервера Telegram в папку images
     await new_file.download_to_drive(image_path)
+    
+    user_choice = context.user_data.get('user_choice')
 
     # создаем словарь с параметрами
     test_dict = dict()
@@ -87,9 +93,18 @@ async def detection(update, context):
     # test_dict['iou'] = 0.99            # порог NMS [0.01, 0.5, 0.99]
     # test_dict['classes'] = '39 46 47 49'        # классы, которые будут распознаны
 
+    if user_choice == 'люди':
+        test_dict['classes'] = '0'
+    elif user_choice == 'животные':
+        test_dict['classes'] = '14 15 16 17 18 19 20 21 22 23'
+    elif user_choice == 'еда':
+        test_dict['classes'] = '39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55'
+    elif user_choice == 'транспорт':
+        test_dict['classes'] = '1 2 3 4 5 6 7 8 9 10 11 12'
+
     _iou = 'iou =' + str(test_dict['iou']) if 'iou' in test_dict.keys() else 'iou = None'
     _conf = 'conf =' + str(test_dict['conf']) if 'conf' in test_dict.keys() else 'conf = None'
-    _classes = 'classes = бананы, бутылки, яблоки, апельсины ' if 'classes' in test_dict.keys() else 'classes = None'
+    _classes = f'classes = {user_choice}' if 'classes' in test_dict.keys() else 'classes = None'
     _options = ", ".join([_conf, _iou, _classes])
     
     # вызов функции detect из класса TerraYolo)
@@ -110,17 +125,20 @@ def main():
     # точка входа в приложение
     application = Application.builder().token(TOKEN).build() # создаем объект класса Application
     print('Бот запущен...')
-
+    
     # добавляем обработчик команды /start
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(button))
+    application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("attachment", attachment))
+
     # добавляем обработчик изображений, которые загружаются в Telegram в СЖАТОМ формате
     # (выбирается при попытке прикрепления изображения к сообщению)
     application.add_handler(MessageHandler(filters.PHOTO, detection, block=False))
     application.add_handler(MessageHandler(filters.TEXT, help))
     application.add_handler(MessageHandler(filters.ATTACHMENT, attachment))
 
-    application.run_polling() # запускаем бота (остановка CTRL + C)
-
+    application.run_polling(allowed_updates=Update.ALL_TYPES) # запускаем бота (остановка CTRL + C)
 
 if __name__ == "__main__":
     main()
